@@ -2,7 +2,7 @@
 #include "../include/CentralCache.h"
 #include <cstdlib>
 
-namespace Kama_memoryPool
+namespace Avery_memoryPool
 {
 
 void* ThreadCache::allocate(size_t size)

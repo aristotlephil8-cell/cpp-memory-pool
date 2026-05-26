@@ -1,118 +1,139 @@
-# Kama-memoryPool 内存池
+# C++ High Performance Memory Pool
 
-> **本项目目前只在[知识星球](https://programmercarl.com/other/kstar.html)答疑并维护**。
+## 项目简介
 
+这是一个面向高频小对象分配场景的 C++ 高性能内存池项目。项目目标是减少频繁 `malloc` / `new` / `free` / `delete` 带来的分配开销、内存碎片和延迟抖动，并通过分层缓存结构提升多线程场景下的对象复用效率。
 
-这次[知识星球](https://programmercarl.com/other/kstar.html)里再添一个C++轮子项目：内存池
+当前代码按 `v1`、`v2`、`v3` 三个版本组织，逐步从基础 fixed-size free list 内存池演进到类似 tcmalloc 思路的 `ThreadCache` / `CentralCache` / `PageCache` 三层缓存架构。
 
-代码量不到1000行，又是一个完整的项目。
+## 项目来源与二次优化说明
 
-内存池在实际的项目开发中较为常见，这次从学习的角度带大家去高效了解和学习内存池项目。
+本项目基于公开项目 [youngyangyang04/memory-pool](https://github.com/youngyangyang04/memory-pool.git) 进行学习、复现和二次实现/优化，不包装成完全原创项目。
 
-## 什么是内存池？
+我在该参考项目基础上完成了：
 
-内存池是一种预分配内存并进行重复利用的技术，通过减少频繁的动态内存分配与释放操作，从而提高程序运行效率。
+- 本地仓库迁移与 GitHub 项目整理。
+- Windows + WSL 环境下的 CMake 构建和测试验证。
+- v2 `ThreadCache` 分配路径的手动调试、问题定位和 bug 修复。
+- 项目命名空间统一重构为 `Avery_memoryPool`。
+- README、迁移说明、调试笔记和面试表达文档整理。
+- 后续将继续补充 benchmark、延迟分布、碎片率统计和架构图。
 
-内存池通常预先分配一块大的内存区域，将其划分为多个小块，每次需要分配内存时直接从这块区域中分配，而不是调用系统的动态分配函数（如new或malloc）。
+## 版本结构
 
-简单来说就是申请一块较大的内存块(不够继续申请)，之后将这块内存的管理放在应用层执行，减少系统调用带来的开销。
+- `v1`：基础内存池。核心结构包括 `HashBucket`、`MemoryPool`、`Slot` 和 free list，适合理解 fixed-size block 复用、对齐和简单对象池接口。
+- `v2`：引入 `ThreadCache` / `CentralCache` / `PageCache` 三层缓存架构。每个线程优先访问本地 free list，本地不足时向中心缓存批量获取，中心缓存不足时向页缓存申请 span。
+- `v3`：在 v2 基础上进一步调整批量获取策略，例如按 size class 控制 batch size，并优化 ThreadCache 与 CentralCache 之间的批量交互。
 
+## 核心设计
 
-## 为什么要做内存池？
+- **size class 分桶**：将小对象请求按 8 字节对齐映射到固定大小类别，降低任意尺寸分配带来的碎片和管理复杂度。
+- **内存对齐**：通过 `roundUp` 和 `getIndex` 保证对象落在对应 size class，减少未对齐访问和内部管理混乱。
+- **free list**：释放后的小块以内嵌 next 指针串成链表，后续分配可 O(1) 复用。
+- **ThreadCache**：线程本地缓存，优先满足当前线程的小对象分配，减少全局锁竞争。
+- **CentralCache**：跨线程共享缓存，负责在多个 ThreadCache 之间调度空闲块，并在本地缓存过多时回收。
+- **PageCache**：底层页级内存管理器，负责向系统申请较大 span，并将 span 切分给 CentralCache。
+- **mmap / 页级内存申请**：v2/v3 的 PageCache 使用 `mmap` 申请页级内存，降低频繁小块系统调用。
+- **大对象直接走系统分配**：超过 `MAX_BYTES` 的请求不进入小对象内存池，直接使用系统分配，避免大对象占用小块缓存体系。
 
-性能优化：
+## v2 调试中发现的问题
 
-1、**减少动态内存分配的开销**：
+在 v2 `ThreadCache` 调试过程中发现 `freeListSize_[index]` 可能不准确：
 
-系统调用malloc/new和free/delete涉及复杂的内存管理操作（如内存查找、碎片整理），导致性能较低，而内存池通过预分配和简单的管理逻辑显著提高了分配和释放的效率。
+1. `ThreadCache::allocate(size_t size)` 曾在确认 `freeList_[index]` 是否为空之前就执行 `freeListSize_[index]--`。当本地 free list 原本为空时，`size_t` 会从 0 下溢为极大的无符号整数。
+2. `ThreadCache::fetchFromCentralCache(size_t index)` 曾从 `start` 开始统计 batch 数量，但 `start` 本身会作为本次分配结果返回给用户，不应该计入线程本地 free list。
+3. 这些问题会影响 `shouldReturnToCentralCache(index)` 的判断，使 ThreadCache 的归还策略失真。
 
-2、 **避免内存碎片**：
+本次修复后，`freeListSize_[index]` 只统计当前 ThreadCache 本地 free list 中真实存在的空闲块数量：只有成功从本地链表 pop 节点时才递减；从 CentralCache 获取批量节点时，只从留在线程本地链表中的第二个节点开始计数。
 
-动态分配内存会产生内存碎片，尤其在大量小对象频繁分配和释放的场景中，导致的后果就是：当程序长时间运行时，由于所申请的内存块的大小不定，频繁使用时会造成大量的内存碎片从而降低程序和操作系统的性能。
+## 构建和运行方式
 
-内存池通过管理固定大小的内存块，可以有效避免碎片化。
+### v1
 
+`v1` 可以在 Windows/MSYS2、WSL 或 Linux 下构建。示例命令：
 
-3、**降低系统调用频率**：
+```bash
+cd v1
+rm -rf build
+mkdir build
+cd build
+cmake .. -DCMAKE_BUILD_TYPE=Debug
+cmake --build .
+./MemoryPoolProject
+```
 
-系统级内存分配（如malloc）需要进入内核态，频繁调用会有较高的性能开销。内存池通过减少系统调用频率提高程序效率。
+如果生成的可执行文件名称不同，可以在 `build` 目录下查找可执行文件并运行。
 
-4、**稳定的分配时间**：
+### v2
 
-使用内存池可以使分配和释放操作的耗时更加可控和稳定，适合实时性有严格要求的系统。
+`v2` 推荐在 WSL/Linux 下构建运行：
 
-## 内存池的应用场景
+```bash
+cd v2
+rm -rf build
+mkdir build
+cd build
+cmake .. -DCMAKE_BUILD_TYPE=Debug
+cmake --build .
+./unit_test
+./perf_test
+```
 
-**高频小对象分配**：
+### v3
 
-* 游戏开发：游戏中大量小对象（如粒子、子弹、NPC）的动态分配和释放非常频繁，使用内存池可以显著优化性能。
-* 网络编程：网络编程中，大量请求和响应对象（如消息报文）和频繁创建和销毁非常适合使用内存池。
-* 内存管理库：一些容器或数据结构（如std::vector或std::deque）在内部可能使用内存池来优化分配性能。
+`v3` 推荐在 WSL/Linux 下构建运行：
 
-**实时系统**：
+```bash
+cd v3
+rm -rf build
+mkdir build
+cd build
+cmake .. -DCMAKE_BUILD_TYPE=Debug
+cmake --build .
+./unit_test
+./perf_test
+```
 
-* 嵌入式设备或实时控制系统中，动态内存分配的延迟可能影响实时性，内存池提供确定性的分配性能。
+## 测试结果
 
-**高性能计算**：
+本次回归结果：
 
-* 在高性能计算程序中，频繁地内存分配和释放会拖累整个程序的性能，内存池可以优化内存管理
+- `v1` Debug 构建通过，并成功运行 `MemoryPoolProject`。
+- `v2 unit_test` 通过。
+- `v2 perf_test` 可运行。
+- `v3 unit_test` 通过。
+- `v3 perf_test` 可运行。
 
-**服务器开发**：
+性能数据会随机器、编译器、负载和 WSL 状态变化。后续会补充稳定 benchmark 表格，目前不在 README 中虚构固定性能数字。
 
-* 数据库服务器、web服务器等需要管理大量连接和请求，这些连接涉及大量内存分配，内存池能有效提升服务器性能。
+## 与 AI Infra / 深度学习底层架构的关系
 
-## 内存池在代码中的应用
+这个项目虽然是 C++ 内存池，但它对应的是 AI Infra 中非常常见的底层资源复用思想：
 
-* 对new/malloc/delete/free等动态开辟内存的系统调用进行替换
-* 对STL众多容器中的空间配置器std::allocator进行替换
+- `ThreadCache` 类似每个推理 worker、本地执行线程或 tokenizer worker 的本地 buffer pool，优先无锁/少锁复用本地资源。
+- `CentralCache` 类似多 worker 共享的资源池，用于在线程本地缓存不足或过量时做跨线程调度。
+- `PageCache` 类似底层大块内存管理器，负责向系统申请大块连续资源，再切分给上层。
+- size class 和 free list 思想可以类比 request context、scheduler node、token metadata、临时通信 buffer、KV Cache block 的复用。
+- 三层缓存体现了高性能系统中的内存管理、缓存层次设计、锁竞争优化、批量分配和性能测试能力。
 
-## 内存池的缺点
+在 PyTorch CUDA caching allocator、vLLM KV Cache block manager、推理服务 request buffer pool 等系统中，都能看到类似的“按大小分桶、批量申请、局部复用、集中回收”的设计影子。
 
-* 初始内存占用：内存池需要预先分配较大的内存区域，可能浪费一些内存。
-* 复杂性：实现和调试内存池代码比直接使用 malloc / new 更复杂。
-* 不适合大型对象：对于大对象的分配可能并不划算。
+## 面试可讲点
 
-## 内存池项目精讲
+- 为什么内存池比 `malloc/free` 快？
+- size class 的作用是什么，为什么要按 8 字节对齐？
+- free list 如何做到 O(1) 分配和释放？
+- ThreadCache 为什么能减少锁竞争？
+- CentralCache 和 PageCache 分别解决什么问题？
+- 为什么大对象不走小对象内存池？
+- v2 `freeListSize_` bug 是怎么发现、复现和修复的？
+- `size_t` 下溢为什么会影响缓存归还策略？
+- 这个项目和 PyTorch CUDA caching allocator / vLLM KV Cache block 管理有什么类比关系？
 
+## 后续优化计划
 
-该项目的专栏是[知识星球](https://programmercarl.com/other/kstar.html)录友专享的。
-
-项目专栏依然是将 「简历写法」给大家列出来了，大家学完就可以参考这个来写简历：
-
-<div align="center"><img src='https://file1.kamacoder.com/i/algo/20250224100020.png' width=500 alt=''></img></div>
-
-做完该项目，面试中大概率会有哪些面试问题，以及如何回答，也列出好了：
-
-<div align="center"><img src='https://file1.kamacoder.com/i/algo/20250224100104.png' width=500 alt=''></img></div>
-
-专栏中的项目面试题都掌握的话，这个项目在面试中基本没问题。
-
-当然项目专栏会对本项目代码做详细的讲解：
-
-<div align="center"><img src='https://file1.kamacoder.com/i/algo/20250224100151.png' width=500 alt=''></img></div>
-
-分三个版本去讲解：
-
-<div align="center"><img src='https://file1.kamacoder.com/i/algo/20250224100226.png' width=500 alt=''></img></div>
-
-每个版本给大家换架构图：
-
-<div align="center"><img src='https://file1.kamacoder.com/i/algo/20250224100315.png' width=500 alt=''></img></div>
-
-<div align="center"><img src='https://file1.kamacoder.com/i/algo/20250224100341.png' width=500 alt=''></img></div>
-
-同时还会对项目做测试：
-
-<div align="center"><img src='https://file1.kamacoder.com/i/algo/20250224100433.png' width=500 alt=''></img></div>
-
-## 答疑
-
-本项目在[知识星球](https://programmercarl.com/other/kstar.html)里为 文字专栏形式，大家不用担心，看不懂，星球里每个项目有专属答疑群，任何问题都可以在群里问，都会得到解答：
-
-![](https://file1.kamacoder.com/i/web/2025-09-26_11-30-13.jpg)
-
-
-## 获取本项目专栏
-
-**本文档仅为星球内部专享，大家可以加入[知识星球](./kstar.md)里获取，在星球置顶一**
-
+- 补充更完整的 benchmark 场景，包括单线程、多线程、混合 size class 和高并发释放。
+- 增加 P50 / P95 / P99 分配延迟统计。
+- 增加内存占用、内部碎片率和 span 复用率统计。
+- 进一步完善 v3 的批量获取和归还策略。
+- 添加更多调试笔记、架构图和 AI Infra 映射说明。

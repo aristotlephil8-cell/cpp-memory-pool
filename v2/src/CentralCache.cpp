@@ -4,7 +4,7 @@
 #include <thread>
 #include <chrono>
 
-namespace Kama_memoryPool
+namespace Avery_memoryPool
 {
 
 const std::chrono::milliseconds CentralCache::DELAY_INTERVAL{1000};

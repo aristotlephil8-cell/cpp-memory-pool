@@ -3,7 +3,7 @@ set print pretty on
 set print elements 20
 set breakpoint pending on
 
-break Kama_memoryPool::ThreadCache::allocate
+break Avery_memoryPool::ThreadCache::allocate
 commands
   silent
   printf "\n[ThreadCache::allocate] size=%zu\n", size
@@ -31,7 +31,7 @@ commands
   continue
 end
 
-break Kama_memoryPool::ThreadCache::fetchFromCentralCache
+break Avery_memoryPool::ThreadCache::fetchFromCentralCache
 commands
   silent
   printf "\n[ThreadCache::fetchFromCentralCache] index=%zu before freeList=%p freeListSize=%zu\n", index, freeList_[index], freeListSize_[index]
@@ -52,7 +52,7 @@ commands
   continue
 end
 
-break Kama_memoryPool::ThreadCache::deallocate
+break Avery_memoryPool::ThreadCache::deallocate
 commands
   silent
   printf "\n[ThreadCache::deallocate] ptr=%p size=%zu\n", ptr, size
@@ -73,7 +73,7 @@ commands
   continue
 end
 
-break Kama_memoryPool::ThreadCache::returnToCentralCache
+break Avery_memoryPool::ThreadCache::returnToCentralCache
 commands
   silent
   printf "\n[ThreadCache::returnToCentralCache] start=%p size=%zu\n", start, size
@@ -87,7 +87,7 @@ commands
   continue
 end
 
-break Kama_memoryPool::CentralCache::fetchRange
+break Avery_memoryPool::CentralCache::fetchRange
 commands
   silent
   printf "\n[CentralCache::fetchRange] index=%zu\n", index
@@ -115,7 +115,7 @@ commands
   continue
 end
 
-break Kama_memoryPool::CentralCache::returnRange
+break Avery_memoryPool::CentralCache::returnRange
 commands
   silent
   printf "\n[CentralCache::returnRange] start=%p size=%zu index=%zu\n", start, size, index
@@ -129,7 +129,7 @@ commands
   continue
 end
 
-break Kama_memoryPool::PageCache::allocateSpan
+break Avery_memoryPool::PageCache::allocateSpan
 commands
   silent
   printf "\n[PageCache::allocateSpan] numPages=%zu\n", numPages

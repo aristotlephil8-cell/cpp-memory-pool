@@ -2,7 +2,7 @@
 #include "Common.h"
 #include <mutex>
 
-namespace Kama_memoryPool
+namespace Avery_memoryPool
 {
 
 class CentralCache
