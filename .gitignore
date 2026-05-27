@@ -11,4 +11,3 @@ Makefile
 *.exe
 .vscode/
 **/.vscode/
-docs/project_summary_for_interview.md
