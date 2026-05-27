@@ -95,9 +95,6 @@ void ThreadCache::returnToCentralCache(void* start, size_t size)
     // 根据大小计算对应的索引
     size_t index = SizeClass::getIndex(size);
 
-    // 获取对齐后的实际块大小
-    size_t alignedSize = SizeClass::roundUp(size);
-
     // 计算要归还内存块数量
     size_t batchNum = freeListSize_[index];
     if (batchNum <= 1) return; // 如果只有一个块，则不归还
@@ -136,7 +133,7 @@ void ThreadCache::returnToCentralCache(void* start, size_t size)
         // 将剩余部分返回给CentralCache
         if (returnNum > 0 && nextNode != nullptr)
         {
-            CentralCache::getInstance().returnRange(nextNode, returnNum * alignedSize, index);
+            CentralCache::getInstance().returnRange(nextNode, returnNum, index);
         }
     }
 }

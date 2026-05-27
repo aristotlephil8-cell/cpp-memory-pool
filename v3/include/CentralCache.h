@@ -15,7 +15,7 @@ public:
     }
 
     void* fetchRange(size_t index, size_t &batchNum);
-    void returnRange(void* start, size_t size, size_t bytes);
+    void returnRange(void* start, size_t blockCount, size_t index);
 
 private:
     // 相互是还所有原子指针为nullptr

@@ -106,10 +106,10 @@ void* CentralCache::fetchRange(size_t index, size_t &batchNum)
     return result;
 }
 
-void CentralCache::returnRange(void* start, size_t size, size_t index)
+void CentralCache::returnRange(void* start, size_t blockCount, size_t index)
 {
     // 当索引大于等于FREE_LIST_SIZE时，说明内存过大应直接向系统归还
-    if (!start || index >= FREE_LIST_SIZE) 
+    if (!start || blockCount == 0 || index >= FREE_LIST_SIZE) 
         return;
 
     while (locks_[index].test_and_set(std::memory_order_acquire)) 
@@ -122,7 +122,7 @@ void CentralCache::returnRange(void* start, size_t size, size_t index)
         // 找到要归还的链表的最后一个节点
         void* end = start;
         size_t count = 1;
-        while (*reinterpret_cast<void**>(end) != nullptr && count < size) {
+        while (*reinterpret_cast<void**>(end) != nullptr && count < blockCount) {
             end = *reinterpret_cast<void**>(end);
             count++;
         }
