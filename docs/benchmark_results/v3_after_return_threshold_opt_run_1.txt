@@ -1,0 +1,28 @@
+v3 memory pool benchmark (Release recommended)
+A ratio above 1.0 means the memory pool is faster than that baseline.
+test                          size      iters       threads   pool_ms       malloc_ms     new_ms        malloc/pool     new/pool    
+fixed immediate               8         200000      1         0.704         1.250         2.270         1.777           3.226       
+fixed immediate               16        200000      1         0.650         1.218         2.066         1.875           3.181       
+fixed immediate               32        200000      1         0.645         1.224         2.139         1.897           3.316       
+fixed immediate               64        200000      1         0.739         1.202         2.201         1.627           2.979       
+fixed immediate               128       200000      1         0.669         1.136         1.932         1.698           2.887       
+fixed immediate               256       200000      1         0.794         1.156         2.040         1.455           2.568       
+fixed immediate               512       200000      1         0.759         1.261         1.964         1.662           2.589       
+fixed immediate               1024      200000      1         0.663         1.155         1.973         1.741           2.975       
+fixed immediate               4096      200000      1         0.692         2.795         3.499         4.040           5.059       
+batch alloc/free              64        80000       1         0.488         1.411         1.094         2.889           2.240       
+batch alloc/free              256       80000       1         0.705         1.686         1.691         2.391           2.397       
+batch alloc/free              1024      80000       1         0.684         9.697         10.129        14.186          14.818      
+batch alloc/free              4096      80000       1         1.356         61.442        61.986        45.325          45.726      
+repeated reuse                64        400000      1         1.987         3.585         5.001         1.804           2.517       
+multi same class              64        50000       2         0.642         0.465         0.821         0.724           1.279       
+multi same class              64        50000       4         0.541         0.615         0.774         1.136           1.430       
+multi same class              64        50000       8         1.341         1.530         1.964         1.141           1.465       
+mixed small sizes             mixed     200000      1         1.429         2.730         3.390         1.910           2.372       
+multi mixed sizes             mixed     100000      2         0.954         1.537         2.083         1.611           2.183       
+multi mixed sizes             mixed     50000       4         0.930         0.947         1.273         1.018           1.369       
+multi mixed sizes             mixed     25000       8         1.498         1.573         1.706         1.050           1.139       
+refill pressure               4096      60000       1         1.032         48.669        48.914        47.153          47.390      
+large bypass                  524288    20000       1         0.635         0.582         0.598         0.916           0.942       
+long stress mixed             mixed     500000      1         3.692         6.859         8.437         1.858           2.285       
+sink=6114340960

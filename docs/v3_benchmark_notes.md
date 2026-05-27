@@ -114,3 +114,18 @@ v2 更像“有三层缓存但 refill 策略较粗”的版本；v3 明确把 re
 3. 增加 CentralCache miss/refill/return 计数，用数据判断瓶颈。
 4. 对多线程同 size class 做更细的锁竞争分析。
 5. 后续再考虑 PageCache span 管理优化，不建议现在大改。
+## Size-aware return threshold experiment
+
+本次只针对 v3 的 `ThreadCache::returnToCentralCache` 做小范围策略实验：原先本地 free list 超过固定阈值 64 后触发归还，这个策略没有区分对象大小。优化后的策略让 8B-32B 对象最多保留 256 个本地空闲块，64B 对象最多保留 128 个，128B-4096B 仍保持 64 个，超过 4096B 的对象使用更低阈值 32。设计目的不是让所有 benchmark 都变快，而是让归还策略和 `getBatchNum(size)` 的动态 batch 思路一致：小对象更偏向本地复用，较大对象更早回到 CentralCache。
+
+Release benchmark 文件：
+- before: `docs/benchmark_results/v3_before_return_threshold_opt.txt`
+- after: `docs/benchmark_results/v3_after_return_threshold_opt_run_1.txt`
+- after: `docs/benchmark_results/v3_after_return_threshold_opt_run_2.txt`
+- after: `docs/benchmark_results/v3_after_return_threshold_opt_run_3.txt`
+
+三次 after 平均值和 before 单次基线对比显示结果并不单向改善。改善较明显的场景包括：`batch alloc/free 64B` 从 0.566ms 到 0.474ms，约快 16.3%；`repeated reuse 64B` 从 2.423ms 到 1.978ms，约快 18.4%；`refill pressure 4096B` 从 1.146ms 到 1.066ms，约快 7.0%；8 线程 mixed size 也有小幅改善。变化很小的场景包括 `large bypass`，从 0.610ms 到 0.605ms，基本符合预期，因为大对象仍然绕过小对象内存池。
+
+变慢的场景也需要如实记录：`mixed small sizes` 从 0.952ms 到 1.455ms，约慢 52.8%；`long stress mixed` 从 2.294ms 到 3.672ms，约慢 60.1%；`multi same class` 2/4 线程也有回退。这个结果说明更高的小对象本地保留阈值可以改善部分 64B 复用场景，但会改变 mixed workload 中不同 size class 的缓存和归还节奏，未必提升整体吞吐。
+
+结论：size-aware return threshold 是合理的策略方向，但当前参数不应被解读为已经找到最优值。下一步如果继续调参，建议先增加 CentralCache miss/refill/return 计数和内存峰值统计，再判断吞吐与线程本地内存占用之间的 trade-off。

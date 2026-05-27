@@ -165,3 +165,12 @@ CentralCache 解决多个线程之间的空闲块共享和再分配问题；Page
 **面试官问：这个项目和 AI Infra 中的 request buffer、KV Cache block、通信 buffer pool 有什么关系？**
 
 回答：AI Infra 中也有大量短生命周期资源，例如 request buffer、token metadata、KV Cache block 句柄和通信临时 buffer。这个项目展示的是同一种工程思想：按大小或规格分桶，本地优先复用，中心池协调跨线程或跨 worker 的资源，底层再管理大块内存。它不等同于 GPU KV Cache 管理，但抽象思路很接近。
+## v3 return threshold 面试补充
+
+**面试官问：v3 为什么还要把归还阈值也做成 size-aware？**
+
+回答：因为 v3 的 refill 已经按对象大小动态 batch，小对象一次可以多拿，大对象一次应该少拿；如果归还阈值仍然固定为 64，就会让获取策略和归还策略不匹配。size-aware return threshold 的思路是让小对象在 ThreadCache 里保留更多块，减少访问 CentralCache 和中心锁；较大对象更早归还，避免单个线程囤积过多内存。
+
+**面试官问：这个优化一定会让性能变好吗？**
+
+回答：不会。它本质上是吞吐和内存占用之间的 trade-off。本次 benchmark 中，64B batch/reuse 这类固定 size class 场景有改善，但 mixed small sizes 和 long stress mixed 出现回退。这说明 allocator 参数不能只看单一场景，必须同时看 CentralCache miss/refill/return、线程本地缓存水位、内存峰值和真实 workload 分布。结果不好时应该如实记录，而不是只挑内存池赢的场景。

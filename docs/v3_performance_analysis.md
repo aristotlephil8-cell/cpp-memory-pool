@@ -102,3 +102,12 @@ v3 不适合：
 4. 优化 `PageCache` 的 span 合并逻辑，目前主要尝试向后合并，仍可完善相邻 span 管理。
 5. 减少 `CentralCache` 链表遍历和自旋等待成本。
 6. 增加 P50/P95/P99 延迟和内存占用峰值统计，只看平均耗时还不够。
+## Size-aware return threshold 小范围优化
+
+原始 v3 的 `returnToCentralCache` 使用固定归还阈值 64。这个策略简单，但和 v3 的动态 batch 设计不完全一致：小对象 refill 时可能一次拿更多块，却在释放阶段较早归还；较大对象单块成本更高，却和小对象使用同样的本地保留上限。
+
+本次小范围优化增加了按对象大小区分的 return threshold：8B-32B 使用 256，64B 使用 128，128B-4096B 保持 64，超过 4096B 使用 32。这样做的工程含义是：小对象用更多本地缓存换更少 CentralCache 访问，大对象用更少本地缓存降低单线程囤积内存的风险。这是吞吐和内存占用之间的权衡，不是无条件提升。
+
+Release benchmark 对比显示，部分复用场景改善：64B batch alloc/free 约快 16.3%，64B repeated reuse 约快 18.4%，4096B refill pressure 约快 7.0%。但 mixed small sizes 和 long stress mixed 明显回退，分别约慢 52.8% 和 60.1%。large object bypass 基本不受影响。
+
+因此，当前结论应保守表述：size-aware threshold 让策略更符合 v3 的设计目标，并改善了部分固定 size class 复用路径；但 mixed workload 对阈值很敏感，当前参数不能作为最终最优配置。后续应结合 CentralCache 访问计数、线程本地缓存水位和 RSS 峰值，再决定是否继续调参。
