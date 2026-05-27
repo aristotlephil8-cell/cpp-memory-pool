@@ -142,3 +142,12 @@ Release benchmark 文件：
 `docs/benchmark_results/v3_stats_experiment.txt` 中，64B repeated reuse 的 ThreadCache hit rate 约为 97.1%，但仍有 57,647 次 CentralCache fetch 和 37,647 次 return，说明该场景仍会频繁触发中心缓存交互。4096B refill pressure 的 hit rate 约为 26.5%，CentralCache fetch 达 220,500 次，说明较大 size class 因 batch 较小而更容易走 refill path。mixed small sizes 和 long stress mixed 在 stats experiment 中显示 100% local hit，这是因为原 benchmark 已经预热了相关 size class；这类结果提示 mixed/long stress 的回退未必来自 PageCache/mmap，而更可能来自本地 fast path 成本、缓存水位和 workload 分布。
 
 额外的 cold 8192B span 场景显示 PageCache `allocateSpanCalls=50`、`systemAllocCalls=50`，用于确认 counters 能观测到 span/mmap 路径。stats 模式包含 atomic 计数开销，耗时只用于辅助分析，不应直接和普通 Release benchmark 的吞吐结论混用。
+## v3 benchmark isolation and cold/warm stats
+
+本次对 `v3_benchmark` 的 stats experiment 做了隔离性改进，用来区分 cold / warm 两种状态。原 stats experiment 位于完整 benchmark 表格之后运行，前序测试已经填热了多个 size class，因此 mixed small sizes 和 long stress mixed 会出现 100% ThreadCache local hit，容易把预热后的状态误认为真实 workload 的完整行为。
+
+cold mode 中，每个 measured round 都在新的 worker thread 中运行，利用 `thread_local ThreadCache` 近似隔离旧的线程本地缓存状态；但 `CentralCache` 和 `PageCache` 是进程级单例，当前 benchmark 不能完全清空它们。warm mode 中，warm-up 和正式 measured rounds 在同一个 worker thread 内运行，先填热 ThreadCache，再 reset stats 并记录纯热缓存路径。
+
+新的 stats 输出增加了多轮耗时统计：`avg_ms`、`min_ms`、`max_ms`、`stddev_ms`。这有助于判断单次结果是否受抖动影响。例如 8192B cold span allocation 的 min/max 差距较大，说明首次 span/systemAlloc 和后续全局缓存状态会影响耗时；而 warm mode 的 stddev 明显更低，更接近稳定热路径。
+
+结果保存于 `docs/benchmark_results/v3_stats_cold_warm_experiment.txt`。这个文件优先用于解释 allocator 行为；由于 stats experiment 会改变后续缓存状态，stats-enabled 运行里的普通 benchmark 表格不应直接替代无 stats 的 Release benchmark 结论。

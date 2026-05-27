@@ -183,3 +183,12 @@ CentralCache 解决多个线程之间的空闲块共享和再分配问题；Page
 **面试官问：这些 counters 怎么帮助解释 mixed / long stress？**
 
 回答：stats experiment 显示 mixed 和 long stress 在预热后可以达到 100% ThreadCache local hit，CentralCache 和 PageCache 计数为 0。这说明这类场景的回退不一定是 mmap 或中心缓存导致的，可能要继续看本地链表操作、缓存水位、分支路径和 benchmark workload 分布。这个过程体现的是可观测性驱动优化：先定位瓶颈层级，再决定是否改策略，而不是为了让结果好看盲目调参。
+## v3 benchmark isolation and cold/warm stats
+
+**面试官问：为什么 allocator benchmark 要区分 cold 和 warm？**
+
+回答：因为 ThreadCache 是 `thread_local` 的，前一个测试可能已经把某些 size class 填热。若不隔离状态，后面的 mixed workload 可能显示 100% local hit，但这只是预热后的热路径，并不代表真实冷启动或首次请求。cold mode 用新 worker thread 近似隔离 ThreadCache，观察首次 miss/refill；warm mode 在同一个线程里先预热再计数，观察纯本地 fast path。
+
+**面试官问：为什么还要看 avg/min/max/stddev？**
+
+回答：allocator benchmark 很容易受首次 mmap、CentralCache 状态、线程调度和缓存状态影响。只看一次平均值可能误判优化效果。多轮 min/max/stddev 可以帮助判断结果是否稳定，也能发现 cold path 和 warm path 的波动差异。这个项目里我会先改善 benchmark 隔离性，再决定是否调整 threshold 或 batch，而不是直接为了某个结果继续调参。

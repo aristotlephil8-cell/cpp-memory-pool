@@ -4,6 +4,7 @@
 #include <algorithm>
 #include <atomic>
 #include <chrono>
+#include <cmath>
 #include <cstdlib>
 #include <cstdint>
 #include <cstring>
@@ -27,6 +28,14 @@ struct Result
     double poolMs;
     double mallocMs;
     double newMs;
+};
+
+struct TimingStats
+{
+    double avgMs = 0.0;
+    double minMs = 0.0;
+    double maxMs = 0.0;
+    double stddevMs = 0.0;
 };
 
 unsigned long long touchMemory(void* ptr, size_t size, unsigned char value)
@@ -453,48 +462,205 @@ Result batchResult(size_t size, size_t iterations)
     };
 }
 
+TimingStats summarizeTimings(const std::vector<double>& timings)
+{
+    TimingStats stats;
+    if (timings.empty())
+    {
+        return stats;
+    }
+
+    stats.minMs = timings.front();
+    stats.maxMs = timings.front();
+    double totalMs = 0.0;
+    for (double value : timings)
+    {
+        totalMs += value;
+        stats.minMs = std::min(stats.minMs, value);
+        stats.maxMs = std::max(stats.maxMs, value);
+    }
+    stats.avgMs = totalMs / timings.size();
+
+    double variance = 0.0;
+    for (double value : timings)
+    {
+        double delta = value - stats.avgMs;
+        variance += delta * delta;
+    }
+    stats.stddevMs = std::sqrt(variance / timings.size());
+    return stats;
+}
+
+void printStatsHeader(const std::string& mode, const std::string& name,
+    const std::vector<double>& timings)
+{
+    TimingStats timing = summarizeTimings(timings);
+    std::cout << "\n[stats][" << mode << "] " << name
+              << " rounds=" << timings.size()
+              << " avg_ms=" << timing.avgMs
+              << " min_ms=" << timing.minMs
+              << " max_ms=" << timing.maxMs
+              << " stddev_ms=" << timing.stddevMs
+              << std::endl;
+}
+
+void runPoolBatchWorkload(size_t size, size_t iterations)
+{
+    unsigned long long localSink = 0;
+    std::vector<void*> ptrs;
+    constexpr size_t chunkSize = 200;
+    ptrs.reserve(chunkSize);
+    for (size_t base = 0; base < iterations; base += chunkSize)
+    {
+        ptrs.clear();
+        size_t currentChunk = std::min(chunkSize, iterations - base);
+        for (size_t i = 0; i < currentChunk; ++i)
+        {
+            void* ptr = MemoryPool::allocate(size);
+            localSink += touchMemory(ptr, size, static_cast<unsigned char>(base + i));
+            ptrs.push_back(ptr);
+        }
+        for (void* ptr : ptrs)
+        {
+            MemoryPool::deallocate(ptr, size);
+        }
+    }
+    g_sink.fetch_add(localSink, std::memory_order_relaxed);
+}
+
+void runPoolReuseWorkload(size_t size, size_t objectsPerRound, size_t reuseRounds)
+{
+    unsigned long long localSink = 0;
+    std::vector<void*> ptrs;
+    ptrs.reserve(objectsPerRound);
+    for (size_t round = 0; round < reuseRounds; ++round)
+    {
+        ptrs.clear();
+        for (size_t i = 0; i < objectsPerRound; ++i)
+        {
+            void* ptr = MemoryPool::allocate(size);
+            localSink += touchMemory(ptr, size, static_cast<unsigned char>(round + i));
+            ptrs.push_back(ptr);
+        }
+        for (void* ptr : ptrs)
+        {
+            MemoryPool::deallocate(ptr, size);
+        }
+    }
+    g_sink.fetch_add(localSink, std::memory_order_relaxed);
+}
+
+void runPoolMixedWorkload(const std::vector<size_t>& sizes)
+{
+    unsigned long long localSink = 0;
+    for (size_t i = 0; i < sizes.size(); ++i)
+    {
+        size_t size = sizes[i];
+        void* ptr = MemoryPool::allocate(size);
+        localSink += touchMemory(ptr, size, static_cast<unsigned char>(i));
+        MemoryPool::deallocate(ptr, size);
+    }
+    g_sink.fetch_add(localSink, std::memory_order_relaxed);
+}
+
 void runStatsExperiment()
 {
 #ifdef ENABLE_MEMORY_POOL_STATS
-    auto runScenario = [](const std::string& name, auto&& func) {
+    constexpr int statsRounds = 3;
+
+    auto runColdScenario = [](const std::string& name, auto&& func) {
+        std::vector<double> timings;
+        timings.reserve(statsRounds);
         MemoryPoolStats::reset();
         MemoryPoolStats::setEnabled(true);
-        double poolMs = func();
-        MemoryPoolStats::setEnabled(false);
 
-        std::cout << "\n[stats] " << name << " pool_ms=" << poolMs << std::endl;
+        for (int i = 0; i < statsRounds; ++i)
+        {
+            double elapsedMs = 0.0;
+            std::thread worker([&]() {
+                auto begin = Clock::now();
+                func();
+                auto end = Clock::now();
+                elapsedMs = std::chrono::duration<double, std::milli>(end - begin).count();
+            });
+            worker.join();
+            timings.push_back(elapsedMs);
+        }
+
+        MemoryPoolStats::setEnabled(false);
+        printStatsHeader("cold", name, timings);
         MemoryPoolStats::print(std::cout);
     };
 
-    std::cout << "\nallocator stats experiment" << std::endl;
+    auto runWarmScenario = [](const std::string& name, auto&& warmFunc, auto&& func) {
+        std::vector<double> timings;
+        timings.reserve(statsRounds);
 
-    warmUp(64);
-    runScenario("fixed 64B repeated reuse", []() {
-        return runPoolReuse(64, 200, 2000);
-    });
+        std::thread worker([&]() {
+            MemoryPoolStats::setEnabled(false);
+            warmFunc();
 
-    std::vector<size_t> mixedSizes = makeMixedSizes(200000);
-    warmUp(128);
-    runScenario("mixed small sizes", [&]() {
-        return runPoolMixed(mixedSizes);
-    });
+            MemoryPoolStats::reset();
+            MemoryPoolStats::setEnabled(true);
+            for (int i = 0; i < statsRounds; ++i)
+            {
+                auto begin = Clock::now();
+                func();
+                auto end = Clock::now();
+                timings.push_back(std::chrono::duration<double, std::milli>(end - begin).count());
+            }
+            MemoryPoolStats::setEnabled(false);
+        });
+        worker.join();
 
-    warmUp(4096);
-    runScenario("refill pressure 4096B", []() {
-        return runPoolBatch(4096, 60000);
-    });
+        printStatsHeader("warm", name, timings);
+        MemoryPoolStats::print(std::cout);
+    };
 
-    runScenario("cold span allocation 8192B", []() {
-        return runPoolBatch(8192, 4000);
-    });
+    std::cout << "\nallocator stats cold/warm experiment" << std::endl;
+    std::cout << "Cold mode uses a new worker thread per measured round to isolate thread_local ThreadCache." << std::endl;
+    std::cout << "CentralCache and PageCache are process-global and are not fully reset between cases." << std::endl;
+    std::cout << "Warm mode performs warm-up and measured rounds in the same worker thread." << std::endl;
 
-    std::vector<size_t> stressSizes = makeMixedSizes(500000);
-    warmUp(256);
-    runScenario("long stress mixed", [&]() {
-        return runPoolMixed(stressSizes);
+    const std::vector<size_t> mixedSizes = makeMixedSizes(200000);
+    const std::vector<size_t> stressSizes = makeMixedSizes(500000);
+
+    runColdScenario("fixed 64B repeated reuse", []() {
+        runPoolReuseWorkload(64, 200, 2000);
     });
+    runWarmScenario("fixed 64B repeated reuse",
+        []() { runPoolReuseWorkload(64, 200, 200); },
+        []() { runPoolReuseWorkload(64, 200, 2000); });
+
+    runColdScenario("mixed small sizes", [&]() {
+        runPoolMixedWorkload(mixedSizes);
+    });
+    runWarmScenario("mixed small sizes",
+        [&]() { runPoolMixedWorkload(mixedSizes); },
+        [&]() { runPoolMixedWorkload(mixedSizes); });
+
+    runColdScenario("refill pressure 4096B", []() {
+        runPoolBatchWorkload(4096, 60000);
+    });
+    runWarmScenario("refill pressure 4096B",
+        []() { runPoolBatchWorkload(4096, 60000); },
+        []() { runPoolBatchWorkload(4096, 60000); });
+
+    runColdScenario("cold span allocation 8192B", []() {
+        runPoolBatchWorkload(8192, 4000);
+    });
+    runWarmScenario("warm span allocation 8192B",
+        []() { runPoolBatchWorkload(8192, 4000); },
+        []() { runPoolBatchWorkload(8192, 4000); });
+
+    runColdScenario("long stress mixed", [&]() {
+        runPoolMixedWorkload(stressSizes);
+    });
+    runWarmScenario("long stress mixed",
+        [&]() { runPoolMixedWorkload(stressSizes); },
+        [&]() { runPoolMixedWorkload(stressSizes); });
 #else
-    std::cout << "\nallocator stats experiment skipped: rebuild with ENABLE_MEMORY_POOL_STATS."
+    std::cout << "\nallocator stats cold/warm experiment skipped: rebuild with ENABLE_MEMORY_POOL_STATS."
               << std::endl;
 #endif
 }
@@ -504,6 +670,8 @@ void runStatsExperiment()
 int main()
 {
     std::cout << std::fixed << std::setprecision(3);
+    runStatsExperiment();
+
     std::cout << "v3 memory pool benchmark (Release recommended)" << std::endl;
     std::cout << "A ratio above 1.0 means the memory pool is faster than that baseline." << std::endl;
     printHeader();
@@ -596,8 +764,6 @@ int main()
         runNewMixed(stressSizes)
     };
     printResult("long stress mixed", "mixed", stressIterations, 1, stressResult);
-
-    runStatsExperiment();
 
     std::cout << "sink=" << g_sink.load(std::memory_order_relaxed) << std::endl;
     return 0;
