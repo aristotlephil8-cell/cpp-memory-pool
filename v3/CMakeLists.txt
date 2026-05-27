@@ -8,6 +8,9 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 # 编译选项
 add_compile_options(-Wall -O2)
 
+option(MEMORY_POOL_ENABLE_STATS "Enable optional memory pool stats for all v3 targets" OFF)
+option(MEMORY_POOL_ENABLE_BENCHMARK_STATS "Enable optional memory pool stats in v3_benchmark" ON)
+
 # 查找pthread库
 find_package(Threads REQUIRED)
 
@@ -34,9 +37,23 @@ add_executable(perf_test
     ${TEST_DIR}/PerformanceTest.cpp
 )
 
+add_executable(v3_benchmark
+    ${SOURCES}
+    ${TEST_DIR}/BenchmarkTest.cpp
+)
+
+if(MEMORY_POOL_ENABLE_STATS)
+    target_compile_definitions(unit_test PRIVATE ENABLE_MEMORY_POOL_STATS)
+    target_compile_definitions(perf_test PRIVATE ENABLE_MEMORY_POOL_STATS)
+    target_compile_definitions(v3_benchmark PRIVATE ENABLE_MEMORY_POOL_STATS)
+elseif(MEMORY_POOL_ENABLE_BENCHMARK_STATS)
+    target_compile_definitions(v3_benchmark PRIVATE ENABLE_MEMORY_POOL_STATS)
+endif()
+
 # 链接pthread库
 target_link_libraries(unit_test PRIVATE Threads::Threads)
 target_link_libraries(perf_test PRIVATE Threads::Threads)
+target_link_libraries(v3_benchmark PRIVATE Threads::Threads)
 
 # 添加测试命令
 add_custom_target(test

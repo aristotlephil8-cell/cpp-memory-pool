@@ -3,7 +3,7 @@
 #include <map>
 #include <mutex>
 
-namespace Kama_memoryPool
+namespace Avery_memoryPool
 {
 
 class PageCache

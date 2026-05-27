@@ -1,0 +1,113 @@
+
+allocator stats cold/warm experiment
+Cold mode uses a new worker thread per measured round to isolate thread_local ThreadCache.
+CentralCache and PageCache are process-global and are not fully reset between cases.
+Warm mode performs warm-up and measured rounds in the same worker thread.
+
+[stats][cold] fixed 64B repeated reuse rounds=3 avg_ms=8.192 min_ms=8.010 max_ms=8.361 stddev_ms=0.144
+MemoryPoolStats
+  ThreadCache allocateCalls=1200000 deallocateCalls=1200000 localHitCount=1165407 localMissCount=34593 hitRate=0.971 fetchFromCentralCount=34593 returnToCentralCount=22590
+  CentralCache fetchRangeCalls=34593 returnRangeCalls=22590
+  PageCache allocateSpanCalls=1 deallocateSpanCalls=0 systemAllocCalls=1
+  topFetchSizeClasses: 64B=34593
+  topReturnSizeClasses: 64B=22590
+
+[stats][warm] fixed 64B repeated reuse rounds=3 avg_ms=8.304 min_ms=8.010 max_ms=8.660 stddev_ms=0.269
+MemoryPoolStats
+  ThreadCache allocateCalls=1200000 deallocateCalls=1200000 localHitCount=1165412 localMissCount=34588 hitRate=0.971 fetchFromCentralCount=34588 returnToCentralCount=22589
+  CentralCache fetchRangeCalls=34588 returnRangeCalls=22589
+  PageCache allocateSpanCalls=0 deallocateSpanCalls=0 systemAllocCalls=0
+  topFetchSizeClasses: 64B=34588
+  topReturnSizeClasses: 64B=22589
+
+[stats][cold] mixed small sizes rounds=3 avg_ms=3.817 min_ms=3.727 max_ms=3.904 stddev_ms=0.072
+MemoryPoolStats
+  ThreadCache allocateCalls=600000 deallocateCalls=600000 localHitCount=599970 localMissCount=30 hitRate=1.000 fetchFromCentralCount=30 returnToCentralCount=0
+  CentralCache fetchRangeCalls=30 returnRangeCalls=0
+  PageCache allocateSpanCalls=9 deallocateSpanCalls=0 systemAllocCalls=9
+  topFetchSizeClasses: 8B=3 16B=3 32B=3 64B=3 128B=3 256B=3 512B=3 1024B=3
+  topReturnSizeClasses: none
+
+[stats][warm] mixed small sizes rounds=3 avg_ms=3.823 min_ms=3.645 max_ms=4.129 stddev_ms=0.217
+MemoryPoolStats
+  ThreadCache allocateCalls=600000 deallocateCalls=600000 localHitCount=600000 localMissCount=0 hitRate=1.000 fetchFromCentralCount=0 returnToCentralCount=0
+  CentralCache fetchRangeCalls=0 returnRangeCalls=0
+  PageCache allocateSpanCalls=0 deallocateSpanCalls=0 systemAllocCalls=0
+  topFetchSizeClasses: none
+  topReturnSizeClasses: none
+
+[stats][cold] refill pressure 4096B rounds=3 avg_ms=2.680 min_ms=2.574 max_ms=2.823 stddev_ms=0.105
+MemoryPoolStats
+  ThreadCache allocateCalls=180000 deallocateCalls=180000 localHitCount=47541 localMissCount=132459 hitRate=0.264 fetchFromCentralCount=132459 returnToCentralCount=2700
+  CentralCache fetchRangeCalls=132459 returnRangeCalls=2700
+  PageCache allocateSpanCalls=38 deallocateSpanCalls=0 systemAllocCalls=38
+  topFetchSizeClasses: 4096B=132459
+  topReturnSizeClasses: 4096B=2700
+
+[stats][warm] refill pressure 4096B rounds=3 avg_ms=2.545 min_ms=2.527 max_ms=2.558 stddev_ms=0.013
+MemoryPoolStats
+  ThreadCache allocateCalls=180000 deallocateCalls=180000 localHitCount=47700 localMissCount=132300 hitRate=0.265 fetchFromCentralCount=132300 returnToCentralCount=2700
+  CentralCache fetchRangeCalls=132300 returnRangeCalls=2700
+  PageCache allocateSpanCalls=0 deallocateSpanCalls=0 systemAllocCalls=0
+  topFetchSizeClasses: 4096B=132300
+  topReturnSizeClasses: 4096B=2700
+
+[stats][cold] cold span allocation 8192B rounds=3 avg_ms=0.569 min_ms=0.323 max_ms=1.045 stddev_ms=0.337
+MemoryPoolStats
+  ThreadCache allocateCalls=12000 deallocateCalls=12000 localHitCount=3021 localMissCount=8979 hitRate=0.252 fetchFromCentralCount=8979 returnToCentralCount=180
+  CentralCache fetchRangeCalls=8979 returnRangeCalls=180
+  PageCache allocateSpanCalls=77 deallocateSpanCalls=0 systemAllocCalls=77
+  topFetchSizeClasses: 8192B=8979
+  topReturnSizeClasses: 8192B=180
+
+[stats][warm] warm span allocation 8192B rounds=3 avg_ms=0.171 min_ms=0.167 max_ms=0.178 stddev_ms=0.005
+MemoryPoolStats
+  ThreadCache allocateCalls=12000 deallocateCalls=12000 localHitCount=3180 localMissCount=8820 hitRate=0.265 fetchFromCentralCount=8820 returnToCentralCount=180
+  CentralCache fetchRangeCalls=8820 returnRangeCalls=180
+  PageCache allocateSpanCalls=0 deallocateSpanCalls=0 systemAllocCalls=0
+  topFetchSizeClasses: 8192B=8820
+  topReturnSizeClasses: 8192B=180
+
+[stats][cold] long stress mixed rounds=3 avg_ms=9.315 min_ms=9.231 max_ms=9.482 stddev_ms=0.118
+MemoryPoolStats
+  ThreadCache allocateCalls=1500000 deallocateCalls=1500000 localHitCount=1499970 localMissCount=30 hitRate=1.000 fetchFromCentralCount=30 returnToCentralCount=0
+  CentralCache fetchRangeCalls=30 returnRangeCalls=0
+  PageCache allocateSpanCalls=0 deallocateSpanCalls=0 systemAllocCalls=0
+  topFetchSizeClasses: 8B=3 16B=3 32B=3 64B=3 128B=3 256B=3 512B=3 1024B=3
+  topReturnSizeClasses: none
+
+[stats][warm] long stress mixed rounds=3 avg_ms=9.216 min_ms=9.026 max_ms=9.501 stddev_ms=0.206
+MemoryPoolStats
+  ThreadCache allocateCalls=1500000 deallocateCalls=1500000 localHitCount=1500000 localMissCount=0 hitRate=1.000 fetchFromCentralCount=0 returnToCentralCount=0
+  CentralCache fetchRangeCalls=0 returnRangeCalls=0
+  PageCache allocateSpanCalls=0 deallocateSpanCalls=0 systemAllocCalls=0
+  topFetchSizeClasses: none
+  topReturnSizeClasses: none
+v3 memory pool benchmark (Release recommended)
+A ratio above 1.0 means the memory pool is faster than that baseline.
+test                          size      iters       threads   pool_ms       malloc_ms     new_ms        malloc/pool     new/pool    
+fixed immediate               8         200000      1         0.921         1.307         2.079         1.420           2.257       
+fixed immediate               16        200000      1         0.989         1.247         2.003         1.261           2.025       
+fixed immediate               32        200000      1         0.971         1.223         2.009         1.260           2.069       
+fixed immediate               64        200000      1         0.949         1.191         1.976         1.255           2.082       
+fixed immediate               128       200000      1         1.119         1.222         2.131         1.092           1.905       
+fixed immediate               256       200000      1         0.997         1.191         2.177         1.194           2.183       
+fixed immediate               512       200000      1         1.038         1.217         2.168         1.172           2.088       
+fixed immediate               1024      200000      1         0.962         1.270         2.024         1.321           2.105       
+fixed immediate               4096      200000      1         1.087         5.904         6.240         5.429           5.739       
+batch alloc/free              64        80000       1         0.929         2.061         2.507         2.219           2.698       
+batch alloc/free              256       80000       1         0.678         2.713         2.655         4.002           3.918       
+batch alloc/free              1024      80000       1         1.142         3.215         2.976         2.814           2.605       
+batch alloc/free              4096      80000       1         1.623         2.484         2.661         1.531           1.639       
+repeated reuse                64        400000      1         3.074         8.533         10.553        2.776           3.433       
+multi same class              64        50000       2         0.545         0.485         0.667         0.890           1.224       
+multi same class              64        50000       4         0.658         0.688         0.930         1.046           1.415       
+multi same class              64        50000       8         1.437         1.480         1.808         1.030           1.258       
+mixed small sizes             mixed     200000      1         1.375         2.896         3.493         2.106           2.539       
+multi mixed sizes             mixed     100000      2         1.089         1.637         2.142         1.503           1.967       
+multi mixed sizes             mixed     50000       4         0.675         1.136         1.213         1.683           1.797       
+multi mixed sizes             mixed     25000       8         1.544         1.543         1.841         1.000           1.193       
+refill pressure               4096      60000       1         1.238         1.993         2.034         1.610           1.643       
+large bypass                  524288    20000       1         0.648         0.645         0.643         0.995           0.993       
+long stress mixed             mixed     500000      1         3.216         6.704         8.702         2.084           2.706       
+sink=6613012848

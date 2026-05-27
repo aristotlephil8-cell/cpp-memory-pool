@@ -1,7 +1,7 @@
 #pragma once
 #include "Common.h"
 
-namespace Kama_memoryPool 
+namespace Avery_memoryPool 
 {
 
 // 线程本地缓存

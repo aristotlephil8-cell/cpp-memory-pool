@@ -1,12 +1,15 @@
 #include "../include/ThreadCache.h"
 #include "../include/CentralCache.h"
+#include "../include/MemoryPoolStats.h"
 #include <cstdlib>
 
-namespace Kama_memoryPool
+namespace Avery_memoryPool
 {
 
 void* ThreadCache::allocate(size_t size)
 {
+    MEMORY_POOL_STATS_RECORD_ALLOCATE();
+
     // 处理0大小的分配请求
     if (size == 0)
     {
@@ -21,23 +24,27 @@ void* ThreadCache::allocate(size_t size)
 
     size_t index = SizeClass::getIndex(size);
 
-    // 更新自由链表大小
-    freeListSize_[index]--;
-
     // 检查线程本地自由链表
     // 如果 freeList_[index] 不为空，表示该链表中有可用内存块
     if (void* ptr = freeList_[index])
     {
+        MEMORY_POOL_STATS_RECORD_LOCAL_HIT(index);
         freeList_[index] = *reinterpret_cast<void**>(ptr); // 将freeList_[index]指向的内存块的下一个内存块地址（取决于内存块的实现）
+        // Only decrement after a real local pop; empty-list misses must not
+        // underflow the size_t counter.
+        freeListSize_[index]--;
         return ptr;
     }
 
     // 如果线程本地自由链表为空，则从中心缓存获取一批内存
+    MEMORY_POOL_STATS_RECORD_LOCAL_MISS(index);
     return fetchFromCentralCache(index);
 }
 
 void ThreadCache::deallocate(void* ptr, size_t size)
 {
+    MEMORY_POOL_STATS_RECORD_DEALLOCATE();
+
     if (size > MAX_BYTES)
     {
         free(ptr);
@@ -70,6 +77,8 @@ bool ThreadCache::shouldReturnToCentralCache(size_t index)
 
 void* ThreadCache::fetchFromCentralCache(size_t index)
 {
+    MEMORY_POOL_STATS_RECORD_FETCH_FROM_CENTRAL(index);
+
     size_t size = (index + 1) * ALIGNMENT;
     // 根据对象内存大小计算批量获取的数量
     size_t batchNum = getBatchNum(size);
@@ -94,9 +103,6 @@ void ThreadCache::returnToCentralCache(void* start, size_t size)
 {
     // 根据大小计算对应的索引
     size_t index = SizeClass::getIndex(size);
-
-    // 获取对齐后的实际块大小
-    size_t alignedSize = SizeClass::roundUp(size);
 
     // 计算要归还内存块数量
     size_t batchNum = freeListSize_[index];
@@ -136,7 +142,8 @@ void ThreadCache::returnToCentralCache(void* start, size_t size)
         // 将剩余部分返回给CentralCache
         if (returnNum > 0 && nextNode != nullptr)
         {
-            CentralCache::getInstance().returnRange(nextNode, returnNum * alignedSize, index);
+            MEMORY_POOL_STATS_RECORD_RETURN_TO_CENTRAL(index);
+            CentralCache::getInstance().returnRange(nextNode, returnNum, index);
         }
     }
 }
@@ -161,7 +168,7 @@ size_t ThreadCache::getBatchNum(size_t size)
     size_t maxNum = std::max(size_t(1), MAX_BATCH_SIZE / size);
 
     // 取最小值，但确保至少返回1
-    return std::max(sizeof(1), std::min(maxNum, baseNum));
+    return std::max(size_t(1), std::min(maxNum, baseNum));
 }
 
 } // namespace memoryPool

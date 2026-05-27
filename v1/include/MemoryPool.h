@@ -7,7 +7,7 @@
 #include <memory>
 #include <mutex>
 
-namespace Kama_memoryPool
+namespace Avery_memoryPool
 {
 #define MEMORY_POOL_NUM 64
 #define SLOT_BASE_SIZE 8
@@ -110,4 +110,4 @@ void deleteElement(T* p)
     }
 }
 
-} // namespace Kama_memoryPool
+} // namespace Avery_memoryPool

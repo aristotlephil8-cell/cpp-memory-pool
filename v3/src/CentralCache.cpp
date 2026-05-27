@@ -1,9 +1,10 @@
 #include "../include/CentralCache.h"
+#include "../include/MemoryPoolStats.h"
 #include "../include/PageCache.h"
 #include <cassert>
 #include <thread>
 
-namespace Kama_memoryPool
+namespace Avery_memoryPool
 {
 
 // 每次从PageCache获取span大小（以页为单位）
@@ -14,6 +15,8 @@ void* CentralCache::fetchRange(size_t index, size_t &batchNum)
     // 索引检查，当索引大于等于FREE_LIST_SIZE时，说明申请内存过大应直接向系统申请
     if (index >= FREE_LIST_SIZE || batchNum == 0) 
         return nullptr;
+
+    MEMORY_POOL_STATS_RECORD_CENTRAL_FETCH_RANGE(index);
 
     // 自旋锁保护
     while (locks_[index].test_and_set(std::memory_order_acquire))
@@ -106,11 +109,13 @@ void* CentralCache::fetchRange(size_t index, size_t &batchNum)
     return result;
 }
 
-void CentralCache::returnRange(void* start, size_t size, size_t index)
+void CentralCache::returnRange(void* start, size_t blockCount, size_t index)
 {
     // 当索引大于等于FREE_LIST_SIZE时，说明内存过大应直接向系统归还
-    if (!start || index >= FREE_LIST_SIZE) 
+    if (!start || blockCount == 0 || index >= FREE_LIST_SIZE) 
         return;
+
+    MEMORY_POOL_STATS_RECORD_CENTRAL_RETURN_RANGE(index);
 
     while (locks_[index].test_and_set(std::memory_order_acquire)) 
     {
@@ -122,7 +127,7 @@ void CentralCache::returnRange(void* start, size_t size, size_t index)
         // 找到要归还的链表的最后一个节点
         void* end = start;
         size_t count = 1;
-        while (*reinterpret_cast<void**>(end) != nullptr && count < size) {
+        while (*reinterpret_cast<void**>(end) != nullptr && count < blockCount) {
             end = *reinterpret_cast<void**>(end);
             count++;
         }
