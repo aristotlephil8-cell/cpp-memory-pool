@@ -85,3 +85,45 @@ CentralCache 解决多个线程之间的空闲块共享和再分配问题；Page
 **面试官问：这个项目和 AI Infra 有什么关系？**
 
 回答：AI Infra 里也有大量短生命周期对象和 buffer，例如 request context、scheduler node、token metadata、临时通信 buffer、KV Cache block handle。内存池体现的是高频资源复用和分层缓存思想：小对象按 size class 管理，本地优先复用，竞争严重时引入更细粒度缓存层。这个思路可以迁移到推理服务的请求生命周期管理、KV Cache block 复用和 worker-local buffer pool 设计中。
+
+## v2 性能面试补充
+
+**面试官问：v2 相比 v1 最大变化是什么？**
+
+回答：v2 从 v1 的基础 free list 内存池升级为 ThreadCache / CentralCache / PageCache 三层缓存。v1 更像按 size class 分桶的共享对象池，v2 则把高频小对象分配优先放在线程本地，只有本地缓存不足或过多时才访问中心缓存和页缓存。
+
+**面试官问：ThreadCache 为什么能减少锁竞争？**
+
+回答：ThreadCache 是 `thread_local` 的，每个线程有自己的 free list。只要本地 free list 命中，分配释放不需要访问 CentralCache 的锁，因此可以减少多线程下的全局竞争。
+
+**面试官问：CentralCache 为什么要批量给 ThreadCache 补货？**
+
+回答：批量补货可以摊薄中心锁和 PageCache 访问成本。如果每次 ThreadCache miss 都只拿一个块，那么每次本地耗尽都要重新进入 CentralCache，三层缓存的优势会被削弱。当前 v2 代码在这点上还有优化空间。
+
+**面试官问：PageCache 负责什么？**
+
+回答：PageCache 负责页级大块内存管理。CentralCache 没有对应 size class 的空闲块时，会向 PageCache 申请 span；PageCache 再通过 `mmap` 向系统申请页，并把 span 切给上层。
+
+**面试官问：为什么现代 malloc/free 有时仍然比你的内存池快？**
+
+回答：现代 allocator 本身已经有线程缓存、size class、arena 和 fast path。自研内存池如果 batch 策略、锁粒度、归还策略或元数据管理不够成熟，在某些场景仍可能输给 malloc/free。
+
+**面试官问：如何设计公平 benchmark？**
+
+回答：要区分 Debug/Release，使用 `steady_clock`，多轮平均，避免核心循环 I/O，写入分配到的内存避免优化，分别比较 memory pool、malloc/free 和 new/delete，并覆盖固定小对象、batch 分配释放、多线程同 size class、多线程 mixed size、refill、大对象 bypass 和长时间压力。
+
+**面试官问：v2 的瓶颈在哪里？**
+
+回答：当前 v2 的瓶颈主要在 CentralCache 和归还路径：`fetchRange` 没有真正批量返回多个块给 ThreadCache；`returnToCentralCache` 的固定阈值比较粗；大批量同 size class 释放会暴露稳定性风险；PageCache 的 SpanTracker 也有固定容量和线性扫描问题。
+
+**面试官问：如果优化 v2，你会先优化哪里？**
+
+回答：我会先修复归还 CentralCache 的稳定性，再实现真正的 ThreadCache 批量 refill，然后把批量大小和归还阈值按 size class 自适应。之后再优化 SpanTracker 索引，并补充 P95/P99 延迟和内存占用指标。
+
+**面试官问：这个三层缓存结构和 TCMalloc 有什么关系？**
+
+回答：它借鉴了 TCMalloc 的核心思想：线程本地缓存处理高频小对象，中心缓存负责跨线程共享，页级缓存负责向系统申请和管理大块内存。当前项目是学习版实现，很多策略还比工业级 TCMalloc 简化。
+
+**面试官问：这个项目和 AI Infra / 推理服务中的 buffer pool 有什么关系？**
+
+回答：推理服务里有大量 request context、token metadata、scheduler node、通信 buffer 和 KV Cache block 句柄，这些对象生命周期短、分配频繁。ThreadCache 类似 worker-local buffer pool，CentralCache 类似多 worker 共享池，PageCache 类似底层大块内存管理器。
