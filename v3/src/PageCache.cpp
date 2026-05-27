@@ -1,4 +1,5 @@
 #include "PageCache.h"
+#include "../include/MemoryPoolStats.h"
 #include <sys/mman.h>
 #include <cstring>
 
@@ -7,6 +8,8 @@ namespace Avery_memoryPool
 
 void* PageCache::allocateSpan(size_t numPages)
 {
+    MEMORY_POOL_STATS_RECORD_PAGE_ALLOCATE_SPAN();
+
     std::lock_guard<std::mutex> lock(mutex_);
 
     // 查找合适的空闲span
@@ -65,6 +68,8 @@ void* PageCache::allocateSpan(size_t numPages)
 
 void PageCache::deallocateSpan(void* ptr, size_t numPages)
 {
+    MEMORY_POOL_STATS_RECORD_PAGE_DEALLOCATE_SPAN();
+
     std::lock_guard<std::mutex> lock(mutex_);
 
     // 查找对应的span，没找到代表不是PageCache分配的内存，直接返回
@@ -125,6 +130,8 @@ void PageCache::deallocateSpan(void* ptr, size_t numPages)
 
 void* PageCache::systemAlloc(size_t numPages)
 {
+    MEMORY_POOL_STATS_RECORD_SYSTEM_ALLOC();
+
     size_t size = numPages * PAGE_SIZE;
 
     // 使用mmap分配内存

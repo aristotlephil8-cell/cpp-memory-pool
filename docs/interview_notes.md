@@ -174,3 +174,12 @@ CentralCache 解决多个线程之间的空闲块共享和再分配问题；Page
 **面试官问：这个优化一定会让性能变好吗？**
 
 回答：不会。它本质上是吞吐和内存占用之间的 trade-off。本次 benchmark 中，64B batch/reuse 这类固定 size class 场景有改善，但 mixed small sizes 和 long stress mixed 出现回退。这说明 allocator 参数不能只看单一场景，必须同时看 CentralCache miss/refill/return、线程本地缓存水位、内存峰值和真实 workload 分布。结果不好时应该如实记录，而不是只挑内存池赢的场景。
+## v3 observability 面试补充
+
+**面试官问：benchmark 结果不好时，为什么先加 counters，而不是继续调参数？**
+
+回答：因为 allocator 的性能问题可能来自不同层：ThreadCache 本地命中率低、CentralCache fetch/return 太频繁、PageCache 频繁 mmap，或者只是本地 fast path 本身成本偏高。如果没有 counters，继续调 batch 或 threshold 很容易变成猜参数。本项目里我用可选 `ENABLE_MEMORY_POOL_STATS` 统计 allocate/deallocate、本地 hit/miss、CentralCache fetch/return、PageCache allocateSpan/systemAlloc，并在 benchmark 结束后统一打印，不在核心循环里做 I/O。
+
+**面试官问：这些 counters 怎么帮助解释 mixed / long stress？**
+
+回答：stats experiment 显示 mixed 和 long stress 在预热后可以达到 100% ThreadCache local hit，CentralCache 和 PageCache 计数为 0。这说明这类场景的回退不一定是 mmap 或中心缓存导致的，可能要继续看本地链表操作、缓存水位、分支路径和 benchmark workload 分布。这个过程体现的是可观测性驱动优化：先定位瓶颈层级，再决定是否改策略，而不是为了让结果好看盲目调参。

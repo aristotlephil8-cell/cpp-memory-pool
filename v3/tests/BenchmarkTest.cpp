@@ -1,4 +1,5 @@
 #include "../include/MemoryPool.h"
+#include "../include/MemoryPoolStats.h"
 
 #include <algorithm>
 #include <atomic>
@@ -452,6 +453,52 @@ Result batchResult(size_t size, size_t iterations)
     };
 }
 
+void runStatsExperiment()
+{
+#ifdef ENABLE_MEMORY_POOL_STATS
+    auto runScenario = [](const std::string& name, auto&& func) {
+        MemoryPoolStats::reset();
+        MemoryPoolStats::setEnabled(true);
+        double poolMs = func();
+        MemoryPoolStats::setEnabled(false);
+
+        std::cout << "\n[stats] " << name << " pool_ms=" << poolMs << std::endl;
+        MemoryPoolStats::print(std::cout);
+    };
+
+    std::cout << "\nallocator stats experiment" << std::endl;
+
+    warmUp(64);
+    runScenario("fixed 64B repeated reuse", []() {
+        return runPoolReuse(64, 200, 2000);
+    });
+
+    std::vector<size_t> mixedSizes = makeMixedSizes(200000);
+    warmUp(128);
+    runScenario("mixed small sizes", [&]() {
+        return runPoolMixed(mixedSizes);
+    });
+
+    warmUp(4096);
+    runScenario("refill pressure 4096B", []() {
+        return runPoolBatch(4096, 60000);
+    });
+
+    runScenario("cold span allocation 8192B", []() {
+        return runPoolBatch(8192, 4000);
+    });
+
+    std::vector<size_t> stressSizes = makeMixedSizes(500000);
+    warmUp(256);
+    runScenario("long stress mixed", [&]() {
+        return runPoolMixed(stressSizes);
+    });
+#else
+    std::cout << "\nallocator stats experiment skipped: rebuild with ENABLE_MEMORY_POOL_STATS."
+              << std::endl;
+#endif
+}
+
 } // namespace
 
 int main()
@@ -549,6 +596,8 @@ int main()
         runNewMixed(stressSizes)
     };
     printResult("long stress mixed", "mixed", stressIterations, 1, stressResult);
+
+    runStatsExperiment();
 
     std::cout << "sink=" << g_sink.load(std::memory_order_relaxed) << std::endl;
     return 0;

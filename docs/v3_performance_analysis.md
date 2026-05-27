@@ -111,3 +111,12 @@ v3 不适合：
 Release benchmark 对比显示，部分复用场景改善：64B batch alloc/free 约快 16.3%，64B repeated reuse 约快 18.4%，4096B refill pressure 约快 7.0%。但 mixed small sizes 和 long stress mixed 明显回退，分别约慢 52.8% 和 60.1%。large object bypass 基本不受影响。
 
 因此，当前结论应保守表述：size-aware threshold 让策略更符合 v3 的设计目标，并改善了部分固定 size class 复用路径；但 mixed workload 对阈值很敏感，当前参数不能作为最终最优配置。后续应结合 CentralCache 访问计数、线程本地缓存水位和 RSS 峰值，再决定是否继续调参。
+## Debug counters and observability
+
+为了避免继续盲目调 threshold 或 batch，本次为 v3 增加了可选 allocator observability。核心思路是先记录 ThreadCache 命中率、CentralCache 交互次数和 PageCache/systemAlloc 次数，再判断瓶颈属于本地 fast path、中心缓存锁竞争，还是底层 span/mmap 申请。
+
+counters 通过 `ENABLE_MEMORY_POOL_STATS` 宏控制，未开启时计数点编译为空语句。`v3_benchmark` 默认开启 stats experiment，`unit_test` 和 `perf_test` 默认不开启。统计只在测试结束后打印，不在核心循环中输出。
+
+本次结果显示，64B repeated reuse 虽然 hit rate 约 97.1%，但仍有数万次 CentralCache fetch/return；4096B refill pressure 的 hit rate 只有约 26.5%，说明动态 batch 对较大对象的保守策略会增加中心缓存访问频率。mixed 和 long stress 在预热后出现 100% local hit，说明这些场景的性能问题不一定来自 PageCache/mmap，后续应结合本地 free list 水位、分支成本、atomic 统计开销和真实 workload 分布继续分析。
+
+这个 observability 层不改变 allocator 分配策略，只提供决策依据。后续如果继续优化，应先扩展 counters 到峰值本地缓存块数、CentralCache 锁等待次数和 RSS，再决定是否调整策略。

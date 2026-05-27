@@ -129,3 +129,16 @@ Release benchmark 文件：
 变慢的场景也需要如实记录：`mixed small sizes` 从 0.952ms 到 1.455ms，约慢 52.8%；`long stress mixed` 从 2.294ms 到 3.672ms，约慢 60.1%；`multi same class` 2/4 线程也有回退。这个结果说明更高的小对象本地保留阈值可以改善部分 64B 复用场景，但会改变 mixed workload 中不同 size class 的缓存和归还节奏，未必提升整体吞吐。
 
 结论：size-aware return threshold 是合理的策略方向，但当前参数不应被解读为已经找到最优值。下一步如果继续调参，建议先增加 CentralCache miss/refill/return 计数和内存峰值统计，再判断吞吐与线程本地内存占用之间的 trade-off。
+## Debug counters / allocator observability
+
+本次为 v3 增加了可选 counters，用来解释 benchmark 中 ThreadCache / CentralCache / PageCache 的实际行为。counters 默认不影响 `unit_test` 和 `perf_test`，`v3_benchmark` 通过 CMake 选项启用后，会在原有 benchmark 表格之后追加 `allocator stats experiment`。
+
+当前统计覆盖：
+- ThreadCache: allocate/deallocate 调用数、本地命中、本地未命中、向 CentralCache fetch 次数、归还 CentralCache 次数。
+- CentralCache: `fetchRange` 和 `returnRange` 调用次数。
+- PageCache: `allocateSpan`、`deallocateSpan`、`systemAlloc` 调用次数。
+- size class: 输出 fetch/return 次数最高的 size class。
+
+`docs/benchmark_results/v3_stats_experiment.txt` 中，64B repeated reuse 的 ThreadCache hit rate 约为 97.1%，但仍有 57,647 次 CentralCache fetch 和 37,647 次 return，说明该场景仍会频繁触发中心缓存交互。4096B refill pressure 的 hit rate 约为 26.5%，CentralCache fetch 达 220,500 次，说明较大 size class 因 batch 较小而更容易走 refill path。mixed small sizes 和 long stress mixed 在 stats experiment 中显示 100% local hit，这是因为原 benchmark 已经预热了相关 size class；这类结果提示 mixed/long stress 的回退未必来自 PageCache/mmap，而更可能来自本地 fast path 成本、缓存水位和 workload 分布。
+
+额外的 cold 8192B span 场景显示 PageCache `allocateSpanCalls=50`、`systemAllocCalls=50`，用于确认 counters 能观测到 span/mmap 路径。stats 模式包含 atomic 计数开销，耗时只用于辅助分析，不应直接和普通 Release benchmark 的吞吐结论混用。
