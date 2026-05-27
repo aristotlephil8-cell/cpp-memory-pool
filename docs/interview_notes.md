@@ -64,3 +64,24 @@ CentralCache 解决多个线程之间的空闲块共享和再分配问题；Page
 ## AI Infra 映射话术
 
 在推理服务中，每个 worker 会频繁创建 request context、token metadata、scheduler node、临时通信 buffer 或 KV Cache block 句柄。如果每次都直接向系统或 CUDA runtime 申请释放，延迟和锁竞争会很明显。这个 C++ 内存池项目体现的思路是：小对象按 size class 复用，worker 本地优先分配，跨 worker 通过共享池协调，底层按页或大块统一申请。这和高性能推理引擎中管理请求生命周期、KV Cache block、临时 buffer 的思想是相通的。
+## v1 性能面试补充
+
+**面试官问：为什么你的内存池不一定比 malloc 快？**
+
+回答：因为 malloc/free 本身已经高度优化，很多现代 allocator 对小对象也有线程缓存和快速路径。内存池只有在高频小对象、对象大小稳定、复用充分、锁竞争可控的场景下才更容易体现优势。v1 还包含 HashBucket 分桶、atomic/CAS、block 分配锁、placement new 和显式析构等额外成本，如果 benchmark 规模太小或者场景不匹配，内存池不一定领先。
+
+**面试官问：如何设计 benchmark 才公平？**
+
+回答：需要区分 Debug 和 Release，性能结论主要看 Release；计时用 `std::chrono::steady_clock`，多轮运行取平均；核心循环里不能做 I/O；要避免编译器优化掉分配结果；测试场景要覆盖固定大小小对象、批量分配再批量释放、重复复用、多线程、小对象混合大小和大对象绕过。这样才能判断内存池到底在哪些场景有效，而不是用一个很小的 demo 循环得出片面结论。
+
+**面试官问：v1 的瓶颈在哪里？**
+
+回答：v1 的主要瓶颈是每次分配释放都要经过 HashBucket size class 映射，free list 使用 atomic/CAS，即使单线程也有原子操作成本；多线程下同一 size class 的 free list 还可能产生 CAS 重试和 ABA 风险。block 扩容时还有 mutex 保护，虽然不是常态路径，但首次分配和扩容阶段会影响测试结果。
+
+**面试官问：如何优化 v1？**
+
+回答：可以先拆分单线程和多线程版本。单线程版本用普通指针 free list，去掉 atomic/CAS 成本；多线程版本可以引入 ThreadCache，把每个线程的高频分配留在本地，减少共享 free list 竞争。还可以调大 block size，优化 size class index 计算，补充延迟分位数和碎片率统计，再根据数据决定是否继续演进到 v2/v3 的分层缓存结构。
+
+**面试官问：这个项目和 AI Infra 有什么关系？**
+
+回答：AI Infra 里也有大量短生命周期对象和 buffer，例如 request context、scheduler node、token metadata、临时通信 buffer、KV Cache block handle。内存池体现的是高频资源复用和分层缓存思想：小对象按 size class 管理，本地优先复用，竞争严重时引入更细粒度缓存层。这个思路可以迁移到推理服务的请求生命周期管理、KV Cache block 复用和 worker-local buffer pool 设计中。
