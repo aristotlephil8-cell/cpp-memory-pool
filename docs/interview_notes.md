@@ -127,3 +127,41 @@ CentralCache 解决多个线程之间的空闲块共享和再分配问题；Page
 **面试官问：这个项目和 AI Infra / 推理服务中的 buffer pool 有什么关系？**
 
 回答：推理服务里有大量 request context、token metadata、scheduler node、通信 buffer 和 KV Cache block 句柄，这些对象生命周期短、分配频繁。ThreadCache 类似 worker-local buffer pool，CentralCache 类似多 worker 共享池，PageCache 类似底层大块内存管理器。
+
+## v3 性能面试补充
+
+**面试官问：v3 相比 v2 改了什么？**
+
+回答：v3 仍然保留 ThreadCache / CentralCache / PageCache 三层结构，但把 ThreadCache refill 改成按对象大小动态批量获取。`ThreadCache::getBatchNum(size)` 会为小对象返回更大的 batch，为大对象返回更小的 batch；`CentralCache::fetchRange(index, batchNum)` 根据这个 batch 数切分中心 free list。
+
+**面试官问：v3 的动态 batch 策略是什么？**
+
+回答：核心思想是按 size class 调整一次从 CentralCache 获取的块数。小对象比如 32B 以内可以一次拿几十个，因为单块成本低、复用频繁；对象变大后 batch 逐步降低；超过 1024B 的对象设计上每次只拿 1 个，避免线程本地缓存囤积过多大块。
+
+**面试官问：小对象为什么可以一次多拿？**
+
+回答：小对象分配频率高，单块内存占用小，一次多拿可以摊薄 CentralCache 锁和 PageCache refill 成本。只要后续请求继续命中同一个 size class，ThreadCache 本地链表 pop 就能完成分配，路径非常短。
+
+**面试官问：大对象为什么应该一次少拿？**
+
+回答：大对象单块内存成本高，如果一次拿太多，可能被某个线程长期囤积，造成内存占用上升和内部碎片。大对象通常分配频率也低于小对象，所以减少 batch 可以用少量吞吐损失换更好的内存控制。
+
+**面试官问：v3 为什么仍然不一定比 malloc/free 快？**
+
+回答：现代 malloc/free 本身已经有线程缓存、size class、arena 和 fast path。v3 是学习版实现，CentralCache 还有自旋锁，PageCache 用 `std::map` 和全局 mutex，归还阈值也是固定值。多线程同 size class 竞争或大对象 bypass 场景下，v3 不一定有优势。
+
+**面试官问：如果 benchmark 结果不好，你怎么分析？**
+
+回答：先确认 benchmark 是否公平：Release 模式、steady clock、多轮平均、无核心循环打印、保存指针并写内存、防止优化。然后按路径拆：ThreadCache 命中是否足够多，miss 是否频繁进入 CentralCache，CentralCache 锁竞争是否高，PageCache 是否频繁 mmap，最后再看对象大小分布是否符合内存池适用场景。
+
+**面试官问：如何判断一个 allocator 的 benchmark 是否公平？**
+
+回答：要同时覆盖固定小对象、批量分配再释放、重复复用、多线程同 size、多线程 mixed size、refill pressure、large object bypass 和长时间压力；要和 malloc/free 分开对比；要 warm up、多轮平均、避免 I/O 和随机数干扰；结果不好也要如实记录，不能只设计让内存池赢的场景。
+
+**面试官问：v3 和 TCMalloc 的 ThreadCache/CentralCache 思路有什么相似点？**
+
+回答：相似点是都把高频小对象优先放在线程本地缓存，减少全局锁；本地缓存不够时再向中心缓存批量获取；中心缓存再向页级缓存申请更大的 span。区别是 TCMalloc 的 size class、batch、span 管理和内存归还策略更成熟，v3 只是学习版简化实现。
+
+**面试官问：这个项目和 AI Infra 中的 request buffer、KV Cache block、通信 buffer pool 有什么关系？**
+
+回答：AI Infra 中也有大量短生命周期资源，例如 request buffer、token metadata、KV Cache block 句柄和通信临时 buffer。这个项目展示的是同一种工程思想：按大小或规格分桶，本地优先复用，中心池协调跨线程或跨 worker 的资源，底层再管理大块内存。它不等同于 GPU KV Cache 管理，但抽象思路很接近。

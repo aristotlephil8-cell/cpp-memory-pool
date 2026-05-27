@@ -34,9 +34,15 @@ add_executable(perf_test
     ${TEST_DIR}/PerformanceTest.cpp
 )
 
+add_executable(v3_benchmark
+    ${SOURCES}
+    ${TEST_DIR}/BenchmarkTest.cpp
+)
+
 # 链接pthread库
 target_link_libraries(unit_test PRIVATE Threads::Threads)
 target_link_libraries(perf_test PRIVATE Threads::Threads)
+target_link_libraries(v3_benchmark PRIVATE Threads::Threads)
 
 # 添加测试命令
 add_custom_target(test
