@@ -11,3 +11,6 @@ Makefile
 *.exe
 .vscode/
 **/.vscode/
+docs/interview_notes.md
+docs/requirements.md
+docs/resume_data_extraction.md
