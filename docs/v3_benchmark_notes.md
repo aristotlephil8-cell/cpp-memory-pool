@@ -29,13 +29,7 @@ benchmark 设计原则：
 
 ## 三次 Release benchmark 结果摘要
 
-测试环境：WSL/Linux，`CMAKE_BUILD_TYPE=Release`。原始输出保存于：
-
-- `docs/benchmark_results/v3_benchmark_run_1.txt`
-- `docs/benchmark_results/v3_benchmark_run_2.txt`
-- `docs/benchmark_results/v3_benchmark_run_3.txt`
-
-下表为三次运行平均值，单位为 ms。`malloc/pool > 1.0` 表示 memory pool 快于 malloc/free。
+测试环境：WSL/Linux，`CMAKE_BUILD_TYPE=Release`。下表为三次本地 Release 运行的平均值，单位为 ms；`malloc/pool > 1.0` 表示 memory pool 快于 malloc/free（原始 txt 输出在本地生成，未包含在本仓库；可通过下方命令重新运行 `v3_benchmark` 复现）。
 
 | test | size | iterations | threads | pool_ms | malloc_ms | new_ms | malloc/pool | new/pool |
 |---|---:|---:|---:|---:|---:|---:|---:|---:|
@@ -118,11 +112,7 @@ v2 更像“有三层缓存但 refill 策略较粗”的版本；v3 明确把 re
 
 本次只针对 v3 的 `ThreadCache::returnToCentralCache` 做小范围策略实验：原先本地 free list 超过固定阈值 64 后触发归还，这个策略没有区分对象大小。优化后的策略让 8B-32B 对象最多保留 256 个本地空闲块，64B 对象最多保留 128 个，128B-4096B 仍保持 64 个，超过 4096B 的对象使用更低阈值 32。设计目的不是让所有 benchmark 都变快，而是让归还策略和 `getBatchNum(size)` 的动态 batch 思路一致：小对象更偏向本地复用，较大对象更早回到 CentralCache。
 
-Release benchmark 文件：
-- before: `docs/benchmark_results/v3_before_return_threshold_opt.txt`
-- after: `docs/benchmark_results/v3_after_return_threshold_opt_run_1.txt`
-- after: `docs/benchmark_results/v3_after_return_threshold_opt_run_2.txt`
-- after: `docs/benchmark_results/v3_after_return_threshold_opt_run_3.txt`
+下面的对比数据来自本地 Release 运行(before 单次基线 + 三次 after 平均),原始 txt 输出未包含在本仓库。
 
 三次 after 平均值和 before 单次基线对比显示结果并不单向改善。改善较明显的场景包括：`batch alloc/free 64B` 从 0.566ms 到 0.474ms，约快 16.3%；`repeated reuse 64B` 从 2.423ms 到 1.978ms，约快 18.4%；`refill pressure 4096B` 从 1.146ms 到 1.066ms，约快 7.0%；8 线程 mixed size 也有小幅改善。变化很小的场景包括 `large bypass`，从 0.610ms 到 0.605ms，基本符合预期，因为大对象仍然绕过小对象内存池。
 
@@ -139,7 +129,7 @@ Release benchmark 文件：
 - PageCache: `allocateSpan`、`deallocateSpan`、`systemAlloc` 调用次数。
 - size class: 输出 fetch/return 次数最高的 size class。
 
-`docs/benchmark_results/v3_stats_experiment.txt` 中，64B repeated reuse 的 ThreadCache hit rate 约为 97.1%，但仍有 57,647 次 CentralCache fetch 和 37,647 次 return，说明该场景仍会频繁触发中心缓存交互。4096B refill pressure 的 hit rate 约为 26.5%，CentralCache fetch 达 220,500 次，说明较大 size class 因 batch 较小而更容易走 refill path。mixed small sizes 和 long stress mixed 在 stats experiment 中显示 100% local hit，这是因为原 benchmark 已经预热了相关 size class；这类结果提示 mixed/long stress 的回退未必来自 PageCache/mmap，而更可能来自本地 fast path 成本、缓存水位和 workload 分布。
+本地 stats experiment 输出中，64B repeated reuse 的 ThreadCache hit rate 约为 97.1%，但仍有 57,647 次 CentralCache fetch 和 37,647 次 return，说明该场景仍会频繁触发中心缓存交互。4096B refill pressure 的 hit rate 约为 26.5%，CentralCache fetch 达 220,500 次，说明较大 size class 因 batch 较小而更容易走 refill path。mixed small sizes 和 long stress mixed 在 stats experiment 中显示 100% local hit，这是因为原 benchmark 已经预热了相关 size class；这类结果提示 mixed/long stress 的回退未必来自 PageCache/mmap，而更可能来自本地 fast path 成本、缓存水位和 workload 分布。
 
 额外的 cold 8192B span 场景显示 PageCache `allocateSpanCalls=50`、`systemAllocCalls=50`，用于确认 counters 能观测到 span/mmap 路径。stats 模式包含 atomic 计数开销，耗时只用于辅助分析，不应直接和普通 Release benchmark 的吞吐结论混用。
 ## v3 benchmark isolation and cold/warm stats
@@ -150,4 +140,4 @@ cold mode 中，每个 measured round 都在新的 worker thread 中运行，利
 
 新的 stats 输出增加了多轮耗时统计：`avg_ms`、`min_ms`、`max_ms`、`stddev_ms`。这有助于判断单次结果是否受抖动影响。例如 8192B cold span allocation 的 min/max 差距较大，说明首次 span/systemAlloc 和后续全局缓存状态会影响耗时；而 warm mode 的 stddev 明显更低，更接近稳定热路径。
 
-结果保存于 `docs/benchmark_results/v3_stats_cold_warm_experiment.txt`。这个文件优先用于解释 allocator 行为；由于 stats experiment 会改变后续缓存状态，stats-enabled 运行里的普通 benchmark 表格不应直接替代无 stats 的 Release benchmark 结论。
+这组 cold/warm 输出在本地生成,优先用于解释 allocator 行为；由于 stats experiment 会改变后续缓存状态，stats-enabled 运行里的普通 benchmark 表格不应直接替代无 stats 的 Release benchmark 结论。

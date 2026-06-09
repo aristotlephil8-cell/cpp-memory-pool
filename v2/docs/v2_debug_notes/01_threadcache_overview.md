@@ -97,9 +97,3 @@ MemoryPool::deallocate(ptr, size)
 | ThreadCache 是否返回第一个块并把剩余块挂到本地 freeList | 设计意图是这样，但当前 CentralCache 已把返回块 next 置空，所以 ThreadCache 通常拿不到剩余链表 |
 | deallocate 是否通过头插法回到 ThreadCache | 是。`*ptr = freeList_[index]; freeList_[index] = ptr` |
 | `freeListSize_[index]` 是否符合预期 | 不符合。`allocate` 在链表为空前先 `--`，可能从 0 下溢到 `SIZE_MAX` |
-
-## 和 AI Infra / 大模型推理服务的关系
-
-大模型推理服务会持续创建和释放大量小对象：请求上下文、token buffer、KV-cache 元数据、RPC 消息、日志结构、调度队列节点等。三级缓存的目标是把高频小对象分配尽量留在本线程，减少全局锁、系统调用和跨 NUMA/跨核竞争。
-
-ThreadCache 对应推理服务里的 worker-local allocator 思路：每个推理线程或执行流维护局部缓存，快路径不碰全局结构。CentralCache 类似共享的内存中转站，PageCache 则接近从 OS 或大块 arena 获取页级资源。这个架构能解释为什么内存池不仅是 C++ 基础项目，也能映射到高并发推理系统里的尾延迟和吞吐优化。

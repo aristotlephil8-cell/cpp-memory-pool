@@ -34,7 +34,7 @@
 └──  docs/                # 性能分析、benchmark 说明、调试记录
 ```
 
-当前仓库里 `docs/benchmark_results/` 只提交了 `.gitkeep`;docs 中引用的原始 txt 输出没有在这个快照里。下面的 benchmark 数字来自 `docs/v1_benchmark_notes.md`、`docs/v2_benchmark_notes.md`、`docs/v3_benchmark_notes.md` 里记录的 Release 平均表。
+benchmark 的原始 txt 输出在本地生成,未包含在本仓库;可按下文「构建与运行」重新运行各 `v*_benchmark` 复现。下面的 benchmark 数字来自 `docs/v1_benchmark_notes.md`、`docs/v2_benchmark_notes.md`、`docs/v3_benchmark_notes.md` 里记录的 Release 平均表。
 
 ## 版本架构
 

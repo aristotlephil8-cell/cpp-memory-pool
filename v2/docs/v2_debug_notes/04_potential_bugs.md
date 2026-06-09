@@ -203,7 +203,3 @@ tracker->freeCount.store(newFreeCount, ...);
 | 3 | 修正 `fetchFromCentralCache()` 的计数 | 避免把用户块计入本地 freeList |
 | 4 | `returnToCentralCache()` 使用真实链长校验 | 增强回收路径鲁棒性 |
 | 5 | Central/Page 的 span 计数和 map 语义 | 属于后续稳定性和内存归还质量优化 |
-
-## 和 AI Infra / 大模型推理服务的关系
-
-这类计数 bug 在推理服务里很危险，因为 allocator 往往影响的是系统的“隐性性能路径”。一次请求可能没问题，但高并发、多线程、长时间运行后，错误计数会造成内存缓存策略失真：要么本地缓存过度膨胀，要么频繁回收到全局缓存。两者都会影响吞吐、P99 延迟和内存水位，是线上服务最难定位的一类问题。

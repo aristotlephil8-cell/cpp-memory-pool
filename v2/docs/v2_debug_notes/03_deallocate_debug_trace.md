@@ -81,7 +81,3 @@ ThreadCache::deallocate(ptr, 1024)
 | `freeListSize_` 大于真实链长 | 遍历时提前遇到 `nullptr`，只做部分修正；`freeListSize_` 可能被设置为一个仍然不可信的 `keepNum` |
 | `freeListSize_` 小于真实链长 | 可能归还不足，ThreadCache 持有过多缓存 |
 | `freeListSize_` 为 `SIZE_MAX` | `keepNum` 约为 `SIZE_MAX / 4`，循环理论上巨大；实际会在链表短时遇到 `nullptr`，但路径非常危险 |
-
-## 和 AI Infra / 大模型推理服务的关系
-
-在推理服务里，释放路径往往和请求生命周期绑定：一次 batch 完成后，大量临时对象同时释放。ThreadCache 的释放路径如果能把大部分释放留在本地，会降低下一批请求的分配成本；但如果计数错误导致频繁归还中心缓存，就会把本地缓存优势抵消掉。更糟的是，错误计数会让回收策略失真，可能造成内存滞留、锁竞争、甚至极端情况下的长循环。
