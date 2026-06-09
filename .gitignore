@@ -15,3 +15,9 @@ docs/interview_notes.md
 docs/requirements.md
 docs/resume_data_extraction.md
 MIGRATION_NOTES.md
+
+/docs/benchmark_results/
+/images/
+/docs/v2_threadcache_bugfix.md
+
+.gitattributes
